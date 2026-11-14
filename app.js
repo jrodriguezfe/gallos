@@ -180,8 +180,21 @@ const roosterForm = document.getElementById("rooster-form");
 const roosterIdInput = document.getElementById("rooster-id");
 const sireSelect = document.getElementById("rooster-sire");
 const damSelect = document.getElementById("rooster-dam");
+const mateSelect = document.getElementById("rooster-mate");
+const childrenSelect = document.getElementById("rooster-children");
+const childrenCountBadge = document.getElementById("children-selected-count");
 const cancelEditBtn = document.getElementById("btn-cancel-edit");
 const searchRoosterInput = document.getElementById("search-rooster");
+
+// Actualizar contador y opciones al interactuar con el formulario
+childrenSelect.addEventListener("change", () => {
+  const count = childrenSelect.selectedOptions.length;
+  childrenCountBadge.textContent = `${count} seleccionado${count === 1 ? '' : 's'}`;
+});
+
+document.getElementById("rooster-sex").addEventListener("change", () => {
+  populateSelects(roosterIdInput.value || null);
+});
 
 // Escuchar colección 'gallos' en tiempo real
 onSnapshot(collection(db, "gallos"), (snapshot) => {
@@ -189,7 +202,7 @@ onSnapshot(collection(db, "gallos"), (snapshot) => {
   roostersData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
   document.getElementById("roosters-count").textContent = `${roostersData.length} registros`;
 
-  populateSelects();
+  populateSelects(roosterIdInput.value || null);
   renderRoostersList(searchRoosterInput.value);
 
   if (selectedRoosterId) {
@@ -204,25 +217,80 @@ onSnapshot(collection(db, "gallos"), (snapshot) => {
 roosterForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const editId = roosterIdInput.value;
+  const sexo = document.getElementById("rooster-sex").value;
+  const newMateId = mateSelect.value || null;
+  const selectedChildrenIds = Array.from(childrenSelect.selectedOptions).map(opt => opt.value);
+
+  const previousDoc = editId ? findById(editId) : null;
+  const oldMateId = previousDoc ? previousDoc.parejaId : null;
 
   const payload = {
     anillo: document.getElementById("rooster-ring").value.trim(),
     nombre: document.getElementById("rooster-name").value.trim(),
-    sexo: document.getElementById("rooster-sex").value,
+    sexo: sexo,
     linea: document.getElementById("rooster-line").value.trim(),
     peso: document.getElementById("rooster-weight").value.trim() || "S/P",
     record: document.getElementById("rooster-wins").value.trim() || "0V - 0D",
     padreId: sireSelect.value || null,
-    madreId: damSelect.value || null
+    madreId: damSelect.value || null,
+    parejaId: newMateId
   };
 
   try {
+    let currentId = editId;
     if (editId) {
       await updateDoc(doc(db, "gallos", editId), payload);
     } else {
       const docRef = await addDoc(collection(db, "gallos"), payload);
+      currentId = docRef.id;
       selectedRoosterId = docRef.id;
     }
+
+    // 1. Sincronizar Pareja (Bidireccional)
+    if (oldMateId && oldMateId !== newMateId) {
+      const oldMate = findById(oldMateId);
+      if (oldMate && oldMate.parejaId === currentId) {
+        await updateDoc(doc(db, "gallos", oldMateId), { parejaId: null });
+      }
+    }
+    if (newMateId) {
+      await updateDoc(doc(db, "gallos", newMateId), { parejaId: currentId });
+    }
+
+    // 2. Sincronizar Hijos
+    const previousChildren = roostersData.filter(r => 
+      (sexo === "M" && r.padreId === currentId) || 
+      (sexo === "H" && r.madreId === currentId)
+    );
+
+    // Desvincular los que ya no están seleccionados
+    for (const prevChild of previousChildren) {
+      if (!selectedChildrenIds.includes(prevChild.id)) {
+        const updateField = sexo === "M" ? { padreId: null } : { madreId: null };
+        await updateDoc(doc(db, "gallos", prevChild.id), updateField);
+      }
+    }
+
+    // Vincular los nuevos hijos seleccionados
+    for (const childId of selectedChildrenIds) {
+      const childDoc = findById(childId);
+      if (childDoc) {
+        const updateField = {};
+        if (sexo === "M") {
+          updateField.padreId = currentId;
+          if (newMateId && !childDoc.madreId) {
+            updateField.madreId = newMateId;
+          }
+        } else {
+          updateField.madreId = currentId;
+          if (newMateId && !childDoc.padreId) {
+            updateField.padreId = newMateId;
+          }
+        }
+        await updateDoc(doc(db, "gallos", childId), updateField);
+      }
+    }
+
     resetRoosterForm();
   } catch (error) {
     console.error("Error guardando ejemplar:", error);
@@ -230,15 +298,20 @@ roosterForm.addEventListener("submit", async (e) => {
   }
 });
 
-// Poblar selectores de Padre (M), Madre (H) y selectores de Combate
+// Poblar selectores de Padre (M), Madre (H), Pareja, Hijos y Combate
 function populateSelects(excludeId = null) {
   const currentSire = sireSelect.value;
   const currentDam = damSelect.value;
+  const currentMate = mateSelect.value;
   const currentRed = matchRedSelect.value;
   const currentBlue = matchBlueSelect.value;
+  const currentSelectedChildren = Array.from(childrenSelect.selectedOptions).map(o => o.value);
+  const currentSex = document.getElementById("rooster-sex").value;
 
   sireSelect.innerHTML = `<option value="">-- Sin Registro / Fundador --</option>`;
   damSelect.innerHTML = `<option value="">-- Sin Registro / Fundadora --</option>`;
+  mateSelect.innerHTML = `<option value="">-- Sin Pareja Asignada --</option>`;
+  childrenSelect.innerHTML = "";
   matchRedSelect.innerHTML = `<option value="">-- Seleccionar Gallo --</option>`;
   matchBlueSelect.innerHTML = `<option value="">-- Seleccionar Gallo --</option>`;
 
@@ -252,14 +325,38 @@ function populateSelects(excludeId = null) {
     }
 
     if (r.id === excludeId) return;
+
+    // Padre y Madre
     if (r.sexo === "M") sireSelect.innerHTML += optionHtml;
     if (r.sexo === "H") damSelect.innerHTML += optionHtml;
+
+    // Pareja: filtrar preferentemente por el sexo opuesto
+    const isOppositeSex = (currentSex === "M" && r.sexo === "H") || (currentSex === "H" && r.sexo === "M");
+    if (isOppositeSex) {
+      mateSelect.innerHTML += `<option value="${r.id}">[${r.anillo}] ${r.nombre} (${r.sexo === 'M' ? 'Gallo' : 'Gallina'} • ${r.linea})</option>`;
+    }
+
+    // Hijos: cualquier ejemplar excepto él mismo y sus padres directos
+    const isDirectParent = (excludeId && (r.id === currentSire || r.id === currentDam));
+    if (!isDirectParent) {
+      const childOpt = document.createElement("option");
+      childOpt.value = r.id;
+      childOpt.textContent = `[${r.anillo}] ${r.nombre} (${r.sexo === 'M' ? 'Macho' : 'Hembra'} • ${r.linea})`;
+      if (currentSelectedChildren.includes(r.id)) {
+        childOpt.selected = true;
+      }
+      childrenSelect.appendChild(childOpt);
+    }
   });
 
   sireSelect.value = currentSire;
   damSelect.value = currentDam;
+  mateSelect.value = currentMate;
   matchRedSelect.value = currentRed;
   matchBlueSelect.value = currentBlue;
+
+  const count = childrenSelect.selectedOptions.length;
+  childrenCountBadge.textContent = `${count} seleccionado${count === 1 ? '' : 's'}`;
 }
 
 // Renderizar lista del Padrón
@@ -282,10 +379,13 @@ function renderRoostersList(filterText = "") {
   filtered.forEach(r => {
     const item = document.createElement("div");
     item.className = `rooster-item ${r.id === selectedRoosterId ? "selected" : ""}`;
+    const mate = r.parejaId ? findById(r.parejaId) : null;
+    const mateText = mate ? ` • Pareja: ${mate.nombre}` : '';
+
     item.innerHTML = `
       <div class="rooster-info">
         <strong>${r.nombre} <small>(${r.anillo})</small></strong>
-        <div class="node-meta">${r.linea} • ${r.sexo === 'M' ? 'Gallo' : 'Gallina'} • ${r.record}</div>
+        <div class="node-meta">${r.linea} • ${r.sexo === 'M' ? 'Gallo' : 'Gallina'} • ${r.record}${mateText}</div>
       </div>
       <div class="rooster-actions">
         <button class="icon-btn btn-edit" title="Editar"><i class="ph ph-pencil-simple"></i></button>
@@ -304,6 +404,12 @@ function renderRoostersList(filterText = "") {
 
     item.querySelector(".btn-delete").addEventListener("click", async () => {
       if (confirm(`¿Eliminar a ${r.nombre} (${r.anillo}) del registro?`)) {
+        if (r.parejaId) {
+          const mate = findById(r.parejaId);
+          if (mate && mate.parejaId === r.id) {
+            await updateDoc(doc(db, "gallos", r.parejaId), { parejaId: null });
+          }
+        }
         await deleteDoc(doc(db, "gallos", r.id));
         if (selectedRoosterId === r.id) selectedRoosterId = null;
       }
@@ -328,6 +434,21 @@ function loadRoosterIntoForm(r) {
   populateSelects(r.id);
   sireSelect.value = r.padreId || "";
   damSelect.value = r.madreId || "";
+  mateSelect.value = r.parejaId || "";
+
+  // Seleccionar automáticamente los hijos actuales de este ejemplar
+  let selectedCount = 0;
+  Array.from(childrenSelect.options).forEach(opt => {
+    const child = findById(opt.value);
+    const isChild = child && (
+      (r.sexo === "M" && child.padreId === r.id) || 
+      (r.sexo === "H" && child.madreId === r.id)
+    );
+    opt.selected = !!isChild;
+    if (isChild) selectedCount++;
+  });
+  childrenCountBadge.textContent = `${selectedCount} seleccionado${selectedCount === 1 ? '' : 's'}`;
+
   cancelEditBtn.classList.remove("hidden");
 }
 
@@ -336,6 +457,9 @@ function resetRoosterForm() {
   roosterForm.reset();
   roosterIdInput.value = "";
   populateSelects();
+  mateSelect.value = "";
+  Array.from(childrenSelect.options).forEach(opt => opt.selected = false);
+  childrenCountBadge.textContent = "0 seleccionados";
   cancelEditBtn.classList.add("hidden");
 }
 
@@ -390,6 +514,9 @@ function renderFamilyTree(rootId) {
   // Nivel Descendencia (Hijos directos)
   const offspring = roostersData.filter(r => r.padreId === subject.id || r.madreId === subject.id);
 
+  // Pareja asignada
+  const mate = subject.parejaId ? findById(subject.parejaId) : null;
+
   container.innerHTML = `
     <!-- NIVEL 1: ABUELOS -->
     <div class="tree-level">
@@ -411,11 +538,12 @@ function renderFamilyTree(rootId) {
       </div>
     </div>
 
-    <!-- NIVEL 3: EJEMPLAR SELECCIONADO -->
+    <!-- NIVEL 3: EJEMPLAR SELECCIONADO Y PAREJA -->
     <div class="tree-level">
-      <div class="level-title">3. Ejemplar en Inspección</div>
-      <div class="nodes-grid cols-1">
+      <div class="level-title">3. Ejemplar en Inspección ${mate ? 'y Pareja Reproductora' : ''}</div>
+      <div class="nodes-grid ${mate ? 'cols-2' : 'cols-1'}">
         ${createNodeHTML(subject, "Ejemplar Actual", true)}
+        ${mate ? createNodeHTML(mate, "Pareja Reproductora") : ""}
       </div>
     </div>
 
@@ -460,12 +588,22 @@ document.getElementById("btn-seed-data").addEventListener("click", async () => {
       anillo: "GEN1-004", nombre: "Reina Hatch", sexo: "H", linea: "Blueface Hatch", peso: "3.55", record: "Reproductora", padreId: null, madreId: null
     });
 
+    // Enlazar parejas abuelos
+    await updateDoc(doc(db, "gallos", abPaterno.id), { parejaId: abPaterna.id });
+    await updateDoc(doc(db, "gallos", abPaterna.id), { parejaId: abPaterno.id });
+    await updateDoc(doc(db, "gallos", abMaterno.id), { parejaId: abMaterna.id });
+    await updateDoc(doc(db, "gallos", abMaterna.id), { parejaId: abMaterno.id });
+
     const padre = await addDoc(collection(db, "gallos"), {
       anillo: "GEN2-010", nombre: "Centella Roja", sexo: "M", linea: "Kelso x Albany", peso: "4.10", record: "5V - 0D", padreId: abPaterno.id, madreId: abPaterna.id
     });
     const madre = await addDoc(collection(db, "gallos"), {
       anillo: "GEN2-011", nombre: "Tormenta Dorada", sexo: "H", linea: "Sweater x Hatch", peso: "3.65", record: "Reproductora", padreId: abMaterno.id, madreId: abMaterna.id
     });
+
+    // Enlazar pareja padres
+    await updateDoc(doc(db, "gallos", padre.id), { parejaId: madre.id });
+    await updateDoc(doc(db, "gallos", madre.id), { parejaId: padre.id });
 
     const hijo = await addDoc(collection(db, "gallos"), {
       anillo: "PER-2026-099", nombre: "Relámpago Imperial", sexo: "M", linea: "Cruce Estelar 4 Líneas", peso: "4.08", record: "3V - 0D", padreId: padre.id, madreId: madre.id

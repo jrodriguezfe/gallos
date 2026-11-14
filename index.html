@@ -204,6 +204,32 @@
                 </select>
               </div>
 
+              <!-- Pareja Reproductora (Opcional) -->
+              <div class="form-group">
+                <label for="rooster-mate">
+                  <i class="ph ph-heart"></i> Pareja Reproductora (Opcional)
+                </label>
+                <select id="rooster-mate">
+                  <option value="">-- Sin Pareja Asignada --</option>
+                </select>
+              </div>
+
+              <!-- Asignación de Hijos / Descendencia (Opcional) -->
+              <div class="form-group">
+                <div class="field-label-header">
+                  <label for="rooster-children">
+                    <i class="ph ph-git-fork"></i> Hijos / Descendencia Directa (Opcional)
+                  </label>
+                  <span id="children-selected-count" class="badge">0 seleccionados</span>
+                </div>
+                <select id="rooster-children" multiple size="4" class="custom-multiselect">
+                  <!-- Se puebla dinámicamente con los ejemplares -->
+                </select>
+                <small class="field-help">
+                  Mantén presionada la tecla <strong>Ctrl</strong> (o <strong>Cmd</strong> en Mac) para seleccionar o deseleccionar varios hijos.
+                </small>
+              </div>
+
               <div class="form-actions">
                 <button type="submit" id="btn-save-rooster" class="btn-primary">
                   <i class="ph-bold ph-floppy-disk"></i> Guardar Ejemplar
