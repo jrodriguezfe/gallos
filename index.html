@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Arena Gallística Pro - Transmisión y Trazabilidad</title>
+  <link rel="stylesheet" href="styles.css">
+  <!-- Iconos Phosphor -->
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+</head>
+<body>
+
+  <!-- Barra de Navegación -->
+  <header class="navbar">
+    <div class="brand">
+      <i class="ph-fill ph-trophy"></i>
+      <div>
+        <h1>SISTEMA GALLÍSTICO <span>PRO</span></h1>
+        <small id="db-status" class="status-badge">Conectando a Firebase...</small>
+      </div>
+    </div>
+
+    <nav class="nav-tabs">
+      <button id="tab-live" class="tab-btn active">
+        <i class="ph-fill ph-broadcast"></i> Transmisión & Combates
+      </button>
+      <button id="tab-lineage" class="tab-btn">
+        <i class="ph-fill ph-git-fork"></i> Linaje & Trazabilidad (CRUD)
+      </button>
+    </nav>
+  </header>
+
+  <main class="container">
+
+    <!-- ==================== SECCIÓN 1: TRANSMISIÓN Y COMBATES ==================== -->
+    <section id="section-live" class="view-section active">
+      <div class="live-grid">
+        
+        <!-- Columna Izquierda: Reproductor en Vivo y Careo Actual -->
+        <div class="stream-panel">
+          <div class="card">
+            <div class="stream-header">
+              <span class="live-indicator"><span class="pulse"></span> SEÑAL EN VIVO</span>
+              <span id="current-fight-label" class="fight-title">Transmisión Oficial del Coliseo</span>
+              <div class="stream-config">
+                <input type="text" id="stream-url-input" placeholder="Pegar URL embed (YouTube / Twitch)">
+                <button id="btn-set-stream" class="btn-secondary">Cambiar Señal</button>
+              </div>
+            </div>
+
+            <!-- Reproductor de Video -->
+            <div class="video-container">
+              <iframe 
+                id="stream-iframe"
+                src="https://www.youtube.com/embed/jfKfPfyJRdk?autoplay=0&mute=1" 
+                title="Transmisión en Vivo" 
+                frameborder="0" 
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                allowfullscreen>
+              </iframe>
+            </div>
+
+            <!-- Careo (Tale of the Tape) de Ejemplares en Arena -->
+            <div class="versus-banner">
+              <div class="fighter-box red-side">
+                <span class="corner-badge red">CINTA ROJA</span>
+                <h3 id="live-red-name">Seleccionar Ejemplar</h3>
+                <p id="live-red-meta">Anillo: -- • Línea: -- • Peso: --</p>
+              </div>
+
+              <div class="vs-circle">VS</div>
+
+              <div class="fighter-box blue-side">
+                <span class="corner-badge blue">CINTA AZUL</span>
+                <h3 id="live-blue-name">Seleccionar Ejemplar</h3>
+                <p id="live-blue-meta">Anillo: -- • Línea: -- • Peso: --</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Columna Derecha: Programación de Combates y Resultados -->
+        <div class="match-panel">
+          <div class="card">
+            <h2><i class="ph ph-swords"></i> Programar Combate en Arena</h2>
+            <p class="subtitle">Selecciona dos gallos del padrón para registrar su enfrentamiento.</p>
+            
+            <form id="match-form" style="margin-top: 1rem;">
+              <div class="form-group">
+                <label for="match-number">N° de Pelea / Ronda *</label>
+                <input type="text" id="match-number" required placeholder="Ej. Pelea Estelar #01">
+              </div>
+
+              <div class="form-group">
+                <label for="match-red">Ejemplar Cinta Roja *</label>
+                <select id="match-red" required>
+                  <option value="">-- Seleccionar Gallo --</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="match-blue">Ejemplar Cinta Azul *</label>
+                <select id="match-blue" required>
+                  <option value="">-- Seleccionar Gallo --</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="match-result">Estado / Resultado del Combate</label>
+                <select id="match-result">
+                  <option value="EN CURSO">En Curso (Presentando en Arena)</option>
+                  <option value="GANÓ ROJA">Victoria Cinta Roja</option>
+                  <option value="GANÓ AZUL">Victoria Cinta Azul</option>
+                  <option value="TABLAS">Tablas (Empate)</option>
+                </select>
+              </div>
+
+              <button type="submit" class="btn-primary full-width">
+                <i class="ph-bold ph-plus-circle"></i> Registrar en Cartelera
+              </button>
+            </form>
+          </div>
+
+          <!-- Historial de Cartelera en Tiempo Real -->
+          <div class="card">
+            <div class="card-header-flex">
+              <h3><i class="ph ph-list-Numbers"></i> Cartelera de Combates</h3>
+              <span id="matches-count" class="badge">0 peleas</span>
+            </div>
+            <div id="matches-list" class="matches-list">
+              <p class="empty-msg">Cargando cartelera...</p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ==================== SECCIÓN 2: LINAJE Y TRAZABILIDAD (CRUD) ==================== -->
+    <section id="section-lineage" class="view-section">
+      <div class="lineage-grid">
+        
+        <!-- Columna Izquierda: Formulario CRUD y Directorio -->
+        <div class="crud-sidebar">
+          <div class="card">
+            <div class="card-header-flex">
+              <h2 id="crud-form-title"><i class="ph ph-plus-circle"></i> Registrar Ejemplar</h2>
+              <button type="button" id="btn-seed-data" class="btn-outline-sm" title="Cargar 3 generaciones de prueba">
+                <i class="ph ph-magic-wand"></i> Datos Demo
+              </button>
+            </div>
+
+            <form id="rooster-form">
+              <input type="hidden" id="rooster-id">
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="rooster-ring">N° Placa / Anillo *</label>
+                  <input type="text" id="rooster-ring" required placeholder="Ej. PER-2026-089">
+                </div>
+                <div class="form-group">
+                  <label for="rooster-name">Nombre del Ejemplar *</label>
+                  <input type="text" id="rooster-name" required placeholder="Ej. Huracán">
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="rooster-sex">Sexo *</label>
+                  <select id="rooster-sex" required>
+                    <option value="M">Gallo (Padrote / Combate)</option>
+                    <option value="H">Gallina (Madre Reproductora)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="rooster-line">Línea Genética / Cruce *</label>
+                  <input type="text" id="rooster-line" required placeholder="Ej. Kelso x Sweater">
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="rooster-weight">Peso (Lbs)</label>
+                  <input type="text" id="rooster-weight" placeholder="Ej. 4.08">
+                </div>
+                <div class="form-group">
+                  <label for="rooster-wins">Récord / Estado</label>
+                  <input type="text" id="rooster-wins" placeholder="Ej. 4V - 0D">
+                </div>
+              </div>
+
+              <!-- Selectores de Trazabilidad (Padre y Madre) -->
+              <div class="form-group">
+                <label for="rooster-sire">Padre (Sire) - Trazabilidad Paterna</label>
+                <select id="rooster-sire">
+                  <option value="">-- Sin Registro / Fundador --</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="rooster-dam">Madre (Dam) - Trazabilidad Materna</label>
+                <select id="rooster-dam">
+                  <option value="">-- Sin Registro / Fundadora --</option>
+                </select>
+              </div>
+
+              <div class="form-actions">
+                <button type="submit" id="btn-save-rooster" class="btn-primary">
+                  <i class="ph-bold ph-floppy-disk"></i> Guardar Ejemplar
+                </button>
+                <button type="button" id="btn-cancel-edit" class="btn-secondary hidden">
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <!-- Lista de Ejemplares Registrados -->
+          <div class="card">
+            <div class="card-header-flex">
+              <h3><i class="ph ph-list-magnifying-glass"></i> Padrón de Ejemplares</h3>
+              <span id="roosters-count" class="badge">0 registros</span>
+            </div>
+            <input type="text" id="search-rooster" class="search-input" placeholder="Buscar por nombre, placa o línea...">
+            <div id="roosters-list" class="roosters-list">
+              <p class="empty-msg">Cargando ejemplares desde Firebase...</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Columna Derecha: Árbol Genealógico Interactivo -->
+        <div class="tree-panel">
+          <div class="card full-height">
+            <div class="card-header-flex">
+              <div>
+                <h2><i class="ph ph-git-branch"></i> Árbol Genealógico y Trazabilidad</h2>
+                <p class="subtitle">Haz clic en cualquier nodo del árbol o de la lista para inspeccionar su ascendencia y descendencia.</p>
+              </div>
+            </div>
+
+            <div id="tree-container" class="tree-container">
+              <div class="empty-tree">
+                <i class="ph ph-tree-structure"></i>
+                <p>Selecciona un ejemplar del padrón izquierdo para visualizar su árbol genealógico completo (Abuelos, Padres, Ejemplar e Hijos).</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Script Principal con Módulos ES6 -->
+  <script type="module" src="app.js"></script>
+</body>
+</html>
