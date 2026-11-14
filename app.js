@@ -12,6 +12,16 @@ import {
   orderBy, 
   serverTimestamp 
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { 
+  getAuth, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  signOut, 
+  onAuthStateChanged,
+  updateProfile 
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 // Configuración de tu proyecto Firebase: gallos-4b523
 const firebaseConfig = {
@@ -23,11 +33,14 @@ const firebaseConfig = {
   appId: "1:888564309771:web:f3d8866e599b974a368c0e"
 };
 
-// Inicializar Firebase y Firestore
+// Inicializar Firebase, Firestore y Autenticación
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const auth = getAuth(app);
+const googleProvider = new GoogleAuthProvider();
 
-// Estado local
+// Estado de usuario y datos locales
+let currentUser = null;
 let roostersData = [];
 let selectedRoosterId = null;
 
@@ -37,6 +50,252 @@ const tabLive = document.getElementById("tab-live");
 const tabLineage = document.getElementById("tab-lineage");
 const sectionLive = document.getElementById("section-live");
 const sectionLineage = document.getElementById("section-lineage");
+const mainContent = document.getElementById("main-content");
+const navTabs = document.getElementById("nav-tabs");
+const streamIframe = document.getElementById("stream-iframe");
+const DEFAULT_STREAM_URL = "https://www.youtube.com/embed/jfKfPfyJRdk?autoplay=0&mute=1";
+
+// Referencias del DOM para Autenticación
+const authModal = document.getElementById("auth-modal");
+const btnOpenLogin = document.getElementById("btn-open-login");
+const btnCloseAuth = document.getElementById("btn-close-auth");
+const tabAuthLogin = document.getElementById("tab-auth-login");
+const tabAuthRegister = document.getElementById("tab-auth-register");
+const formLogin = document.getElementById("form-login");
+const formRegister = document.getElementById("form-register");
+const btnGoogleAuth = document.getElementById("btn-google-auth");
+const authError = document.getElementById("auth-error");
+const authErrorText = document.getElementById("auth-error-text");
+const linkToRegister = document.getElementById("link-to-register");
+const authTitle = document.getElementById("auth-title");
+const authSubtitle = document.getElementById("auth-subtitle");
+const authSwitchNote = document.getElementById("auth-switch-note");
+
+const userProfileEl = document.getElementById("user-profile");
+const userAvatarEl = document.getElementById("user-avatar");
+const userAvatarFallback = document.getElementById("user-avatar-fallback");
+const userNameEl = document.getElementById("user-name");
+const userEmailEl = document.getElementById("user-email");
+const btnLogout = document.getElementById("btn-logout");
+
+/* ==========================================================================
+   0. MÓDULO DE AUTENTICACIÓN (LOGIN, REGISTRO Y GOOGLE)
+   ========================================================================== */
+function openAuthModal(mode = "login", customMsg = null) {
+  authModal.classList.remove("hidden");
+  clearAuthError();
+  if (customMsg) {
+    showAuthError(customMsg);
+  }
+  setAuthMode(mode);
+}
+
+function closeAuthModal() {
+  // Solo se permite cerrar si el usuario está autenticado
+  if (!currentUser) return;
+  authModal.classList.add("hidden");
+  clearAuthError();
+}
+
+function showAuthError(msg) {
+  authErrorText.textContent = msg;
+  authError.classList.remove("hidden");
+}
+
+function clearAuthError() {
+  authErrorText.textContent = "";
+  authError.classList.add("hidden");
+}
+
+function setAuthMode(mode) {
+  clearAuthError();
+  if (mode === "login") {
+    tabAuthLogin.classList.add("active");
+    tabAuthRegister.classList.remove("active");
+    formLogin.classList.remove("hidden");
+    formRegister.classList.add("hidden");
+    authTitle.textContent = "Acceso al Sistema";
+    authSubtitle.textContent = "Inicia sesión con tu cuenta de Google o correo electrónico";
+    authSwitchNote.innerHTML = `¿No tienes una cuenta aún? <a href="#" id="link-to-register">Regístrate gratis</a>`;
+    document.getElementById("link-to-register").addEventListener("click", (e) => {
+      e.preventDefault();
+      setAuthMode("register");
+    });
+  } else {
+    tabAuthRegister.classList.add("active");
+    tabAuthLogin.classList.remove("active");
+    formRegister.classList.remove("hidden");
+    formLogin.classList.add("hidden");
+    authTitle.textContent = "Crear Cuenta";
+    authSubtitle.textContent = "Regístrate para registrar y gestionar ejemplares y combates";
+    authSwitchNote.innerHTML = `¿Ya tienes una cuenta? <a href="#" id="link-to-login">Inicia sesión aquí</a>`;
+    document.getElementById("link-to-login").addEventListener("click", (e) => {
+      e.preventDefault();
+      setAuthMode("login");
+    });
+  }
+}
+
+function getAuthErrorMessage(errorCode, rawMessage = "") {
+  switch (errorCode) {
+    case "auth/operation-not-supported-in-this-environment":
+      return "Google Sign-In requiere un servidor web (http:// o https://). Si abriste el archivo con doble clic (file://), ejecuta un servidor local (Live Server / localhost) o ingresa con Correo y Contraseña.";
+    case "auth/unauthorized-domain":
+      return `Dominio no autorizado (${window.location.hostname || "local"}). Ve a Firebase Console > Authentication > Settings > Authorized domains y agrega "${window.location.hostname || "localhost"}".`;
+    case "auth/operation-not-allowed":
+      return "El proveedor de Google no está habilitado. Ve a Firebase Console > Authentication > Sign-in method y activa 'Google'.";
+    case "auth/invalid-credential":
+    case "auth/wrong-password":
+    case "auth/user-not-found":
+      return "Correo electrónico o contraseña incorrectos.";
+    case "auth/email-already-in-use":
+      return "Este correo ya está registrado. Inicia sesión o utiliza otro correo.";
+    case "auth/weak-password":
+      return "La contraseña es muy débil. Debe tener al menos 6 caracteres.";
+    case "auth/invalid-email":
+      return "El formato del correo electrónico no es válido.";
+    case "auth/popup-closed-by-user":
+      return "Se cerró la ventana emergente de Google antes de completar el inicio de sesión.";
+    case "auth/popup-blocked":
+      return "El navegador bloqueó la ventana emergente de Google. Por favor permite las ventanas emergentes.";
+    case "auth/network-request-failed":
+      return "Error de conexión de red. Verifica tu internet e inténtalo nuevamente.";
+    case "auth/too-many-requests":
+      return "Demasiados intentos fallidos. Espera unos minutos antes de volver a intentar.";
+    default:
+      return `Error (${errorCode || "auth/error"}): ${rawMessage || "Verifica la configuración de Firebase o utiliza Correo y Contraseña."}`;
+  }
+}
+
+// Observador del estado de autenticación en tiempo real
+onAuthStateChanged(auth, (user) => {
+  currentUser = user;
+  if (user) {
+    // ACCESO CONCEDIDO: Revelar transmisión, combates, linaje y trazabilidad
+    mainContent.classList.remove("hidden");
+    navTabs.classList.remove("hidden");
+    btnOpenLogin.classList.add("hidden");
+    userProfileEl.classList.remove("hidden");
+    btnCloseAuth.classList.remove("hidden");
+
+    // Iniciar señal en vivo si no estaba cargada
+    if (!streamIframe.src || streamIframe.src === "about:blank" || streamIframe.src === window.location.href) {
+      streamIframe.src = DEFAULT_STREAM_URL;
+    }
+
+    const displayName = user.displayName || user.email.split("@")[0];
+    userNameEl.textContent = displayName;
+    userEmailEl.textContent = user.email;
+
+    if (user.photoURL) {
+      userAvatarEl.src = user.photoURL;
+      userAvatarEl.style.display = "block";
+      userAvatarFallback.style.display = "none";
+    } else {
+      userAvatarEl.style.display = "none";
+      userAvatarFallback.style.display = "flex";
+      userAvatarFallback.innerHTML = `<i class="ph ph-user"></i>`;
+    }
+
+    dbStatus.textContent = "Conectado a Firebase • Sesión activa";
+    closeAuthModal();
+  } else {
+    // ACCESO DENEGADO: Bloquear visualización de transmisión y linaje
+    mainContent.classList.add("hidden");
+    navTabs.classList.add("hidden");
+    btnOpenLogin.classList.remove("hidden");
+    userProfileEl.classList.add("hidden");
+    btnCloseAuth.classList.add("hidden");
+
+    // Detener de inmediato cualquier reproducción de streaming
+    streamIframe.src = "";
+
+    dbStatus.textContent = "Acceso restringido • Inicia sesión";
+
+    // Forzar pantalla de autenticación obligatoria
+    openAuthModal("login");
+  }
+});
+
+// Eventos de apertura / cierre del modal
+btnOpenLogin.addEventListener("click", () => openAuthModal("login"));
+btnCloseAuth.addEventListener("click", () => {
+  if (currentUser) closeAuthModal();
+});
+authModal.addEventListener("click", (e) => {
+  if (e.target === authModal && currentUser) closeAuthModal();
+});
+tabAuthLogin.addEventListener("click", () => setAuthMode("login"));
+tabAuthRegister.addEventListener("click", () => setAuthMode("register"));
+linkToRegister.addEventListener("click", (e) => {
+  e.preventDefault();
+  setAuthMode("register");
+});
+
+// Ingreso directo con Google
+btnGoogleAuth.addEventListener("click", async () => {
+  clearAuthError();
+  if (window.location.protocol === "file:") {
+    showAuthError("⚠️ Google Sign-In no puede funcionar abriendo el archivo directamente con doble clic (file://). Debes abrir el proyecto desde un servidor local (ej. Live Server de VS Code o http://localhost) o ingresar con tu Correo y Contraseña.");
+    return;
+  }
+  try {
+    await signInWithPopup(auth, googleProvider);
+  } catch (error) {
+    console.error("Error Google Auth:", error);
+    showAuthError(getAuthErrorMessage(error.code, error.message));
+  }
+});
+
+// Ingreso con Correo y Contraseña
+formLogin.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  clearAuthError();
+  const email = document.getElementById("login-email").value.trim();
+  const password = document.getElementById("login-password").value;
+
+  try {
+    await signInWithEmailAndPassword(auth, email, password);
+    formLogin.reset();
+  } catch (error) {
+    console.error("Error Login:", error);
+    showAuthError(getAuthErrorMessage(error.code, error.message));
+  }
+});
+
+// Registro de Usuario
+formRegister.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  clearAuthError();
+  const name = document.getElementById("register-name").value.trim();
+  const email = document.getElementById("register-email").value.trim();
+  const password = document.getElementById("register-password").value;
+  const passwordConfirm = document.getElementById("register-password-confirm").value;
+
+  if (password !== passwordConfirm) {
+    showAuthError("Las contraseñas no coinciden. Por favor verifícalas.");
+    return;
+  }
+
+  try {
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    if (name) {
+      await updateProfile(userCredential.user, { displayName: name });
+      userNameEl.textContent = name;
+    }
+    formRegister.reset();
+  } catch (error) {
+    console.error("Error Registro:", error);
+    showAuthError(getAuthErrorMessage(error.code, error.message));
+  }
+});
+
+// Cerrar Sesión
+btnLogout.addEventListener("click", async () => {
+  if (confirm("¿Deseas cerrar tu sesión?")) {
+    await signOut(auth);
+  }
+});
 
 /* ==========================================================================
    1. NAVEGACIÓN ENTRE PESTAÑAS Y STREAM EN VIVO
@@ -98,6 +357,10 @@ matchBlueSelect.addEventListener("change", () => {
 // Registrar combate en Firestore
 matchForm.addEventListener("submit", async (e) => {
   e.preventDefault();
+  if (!currentUser) {
+    openAuthModal("login", "Debes iniciar sesión para registrar combates en la cartelera.");
+    return;
+  }
   const numero = document.getElementById("match-number").value.trim();
   const rojoId = matchRedSelect.value;
   const azulId = matchBlueSelect.value;
@@ -164,6 +427,10 @@ onSnapshot(matchesQuery, (snapshot) => {
     });
 
     item.querySelector(".btn-del-match").addEventListener("click", async () => {
+      if (!currentUser) {
+        openAuthModal("login", "Debes iniciar sesión para eliminar combates de la cartelera.");
+        return;
+      }
       await deleteDoc(doc(db, "combates", docSnap.id));
     });
 
@@ -216,6 +483,10 @@ onSnapshot(collection(db, "gallos"), (snapshot) => {
 // Crear o Actualizar ejemplar
 roosterForm.addEventListener("submit", async (e) => {
   e.preventDefault();
+  if (!currentUser) {
+    openAuthModal("login", "Debes iniciar sesión para registrar o modificar ejemplares.");
+    return;
+  }
   const editId = roosterIdInput.value;
   const sexo = document.getElementById("rooster-sex").value;
   const newMateId = mateSelect.value || null;
@@ -403,6 +674,10 @@ function renderRoostersList(filterText = "") {
     item.querySelector(".btn-edit").addEventListener("click", () => loadRoosterIntoForm(r));
 
     item.querySelector(".btn-delete").addEventListener("click", async () => {
+      if (!currentUser) {
+        openAuthModal("login", "Debes iniciar sesión para eliminar ejemplares.");
+        return;
+      }
       if (confirm(`¿Eliminar a ${r.nombre} (${r.anillo}) del registro?`)) {
         if (r.parejaId) {
           const mate = findById(r.parejaId);
@@ -574,6 +849,10 @@ function renderFamilyTree(rootId) {
    5. CARGA DE DATOS DEMO (3 GENERACIONES DE PRUEBA)
    ========================================================================== */
 document.getElementById("btn-seed-data").addEventListener("click", async () => {
+  if (!currentUser) {
+    openAuthModal("login", "Debes iniciar sesión para cargar datos demo de prueba.");
+    return;
+  }
   try {
     const abPaterno = await addDoc(collection(db, "gallos"), {
       anillo: "GEN1-001", nombre: "Patriarca Kelso", sexo: "M", linea: "Kelso Puro", peso: "4.15", record: "7V - 0D", padreId: null, madreId: null
